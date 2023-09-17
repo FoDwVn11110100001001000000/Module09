@@ -1,51 +1,69 @@
 import json
+import logging
 
-import requests
-from bs4 import BeautifulSoup
+from utils import Author, Quotes
+from utils import setup_log
+from connect_db import fill_data, connector
+from parse import main_parse
 
-def response(link: str = ''):
-    base_url = f'https://quotes.toscrape.com{link}'
-    response = requests.get(base_url)
-    if response.status_code == 200:
-        soup = BeautifulSoup(response.text, 'lxml')
-    else:
-        raise requests.exceptions.RequestException(f"Запит завершився з кодом помилки {response.status_code}")
-    return soup
+def add_authors():
+    with open('authors.json', 'r', encoding='UTF-8') as f:
+        data = json.load(f)
 
-def get_all_links() -> set:
-    pages = [ f'/page/{page_number}/' for page_number in range(1, 11) ]
-    links = [ response(page).select('div[class=quote] span a') for page in pages ]
-    links_set = set(link.get('href') for sublist in links for link in sublist)
-    return links_set
+    for item in data:
+        authors = Author(
+            fullname=item['fullname'], 
+            born_date=item['born_date'],
+            born_location = item['born_location'],
+            description=item['description']
+            )
+        authors.save()
 
-def serialize(name: str, data: list[dict]):
-    with open(name, "a", encoding='utf-8') as json_file:
-        json.dump(data, json_file, indent=4, ensure_ascii=False)
+def add_quotes():
+    with open('quotes.json', 'r', encoding='UTF-8') as f:
+        data = json.load(f)
 
-def authors():
-    authors_list = list()
+    for item in data:
+        author_ids = [autor.id for autor in Author.objects if autor.fullname == item['author']]
 
-    links = get_all_links()
-    for link in links:
-        current_link = response(link)
-        fullname = current_link.select_one('h3', class_='author-title').text
-        born_date = current_link.select_one('div[class=author-details] p span[class=author-born-date]').text
-        location = current_link.select_one('div[class=author-details] p span[class=author-born-location]').text
-        description = current_link.select_one('div[class=author-description]').text.strip()
+        quote = Quotes(tags=item['tags'], author=author_ids, quote=item['quote'])
+        quote.save()
 
-        authors_list.append({
-            'fullname': fullname,
-            'born_date': born_date,
-            'born_location': location,
-            'description': description
-        })
-    return authors_list
+def search():
+    while True:
+        text_input = input('Please, input your request: ')
+        if text_input == "exit":
+            break
+        text_input = text_input.split(':')
+        if text_input[0] == 'name':
+            author_name = text_input[1].strip()
+            quote = Quotes.objects.filter(Author.fullname == author_name)
+            for quotee in quote:
+                print(quotee.quote)
+        elif text_input[0] == 'tag':
+            tag = text_input[1].strip()
+            for quote in Quotes.objects:
+                if tag in quote.tags:
+                    print(quote.quote)
+        elif text_input[0] == 'tags':
+            tags = text_input[1].split(',')
+            for quote in Quotes.objects:
+                if all(tag in quote.tags for tag in tags):
+                    print(quote.quote) 
+        else:
+            logging.error('Invalid request')
 
 
 if __name__ == '__main__':
-    data = authors()
-    serialize('authors.json', data)
-    print('FINISHED')
+    main_parse()
 
+    setup_log()
+    connector()
+    
+    authors = add_authors()
+    quotes = add_quotes()
 
+    fill_data(authors, 'author')
+    fill_data(quotes, 'quote')
 
+    search()
